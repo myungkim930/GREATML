@@ -70,6 +70,15 @@ def k_hop_subgraph(
     for i in range(mapping.size(1)):
         edge_index_new[edge_index == mapping[0, i]] = mapping[1, i]
 
+    edge_index_new = torch.cat(
+        (edge_index_new, torch.tensor(([0], [edge_index_new.max().item() + 1]))), dim=1
+    )
+    edge_type = torch.cat((edge_type, torch.tensor([0])))
+    mapping = torch.cat(
+        (mapping, torch.tensor(([int(mapping[0, 0])], [edge_index_new.max().item()]))),
+        dim=1,
+    )
+
     return edge_index_new, edge_type, mapping
 
 
@@ -107,6 +116,7 @@ def subgraph(
 def add_self_loops(
     edge_index: Adj,
     edge_type=None,
+    exclude_center: bool = False,
 ) -> Tuple[Tensor, Tensor]:
     r"""Adds a self-loop :math:`(i,i) \in \mathcal{E}` to every node
     :math:`i \in \mathcal{V}` in the graph given by :attr:`edge_index` or
@@ -115,16 +125,28 @@ def add_self_loops(
 
     N = edge_index.max().item() + 1
 
-    loop_index = torch.arange(0, N, dtype=torch.long, device=edge_index.device)
+    if exclude_center:
+        loop_index = torch.arange(1, N, dtype=torch.long, device=edge_index.device)
+    else:
+        loop_index = torch.arange(0, N, dtype=torch.long, device=edge_index.device)
     loop_index = loop_index.unsqueeze(0).repeat(2, 1)
 
     edge_index = torch.cat([edge_index, loop_index], dim=1)
 
     if edge_type is not None:
-        edge_type = torch.cat(
-            [edge_type, torch.zeros(N, dtype=torch.long, device=edge_index.device)],
-            dim=0,
-        )
+        if exclude_center:
+            edge_type = torch.cat(
+                [
+                    edge_type,
+                    torch.zeros(N - 1, dtype=torch.long, device=edge_index.device),
+                ],
+                dim=0,
+            )
+        else:
+            edge_type = torch.cat(
+                [edge_type, torch.zeros(N, dtype=torch.long, device=edge_index.device)],
+                dim=0,
+            )
         return edge_index, edge_type
     else:
         return edge_index
@@ -216,6 +238,7 @@ def feature_extract_lm(
     main_data,
     node_idx: Optional[Union[int, List[int], Tensor]] = None,
     edge_type: Optional[Union[int, List[int], Tensor]] = None,
+    exclude_center: bool = False,
 ):
     r"""Extracts node/edge features from language model."""
 
@@ -242,6 +265,8 @@ def feature_extract_lm(
         x = torch.tensor(
             x,
         )
+        if exclude_center:
+            x[0, :] = -9e15 * torch.ones(x.size(1))
 
     if edge_type is not None:
         if isinstance(edge_type, int):

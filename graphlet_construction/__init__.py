@@ -1,4 +1,6 @@
-from .gc_makeg import Graphlet
+from .gc_mg import Graphlet
+
+# from .gc_makeg import Graphlet
 
 # from .gc_makebatch import make_batch
 from .gc_utils import (
