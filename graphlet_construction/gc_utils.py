@@ -153,7 +153,12 @@ def add_self_loops(
 
 
 ## Remove duplicate function
-def remove_duplicates(edge_index: Adj, edge_type: Adj = None, edge_attr: Adj = None):
+def remove_duplicates(
+    edge_index: Adj,
+    edge_type: Adj = None,
+    edge_attr: Adj = None,
+    perturb_tensor: Adj = None,
+):
 
     nnz = edge_index.size(1)
     num_nodes = edge_index.max().item() + 1
@@ -164,7 +169,7 @@ def remove_duplicates(edge_index: Adj, edge_type: Adj = None, edge_attr: Adj = N
     idx[1:].mul_(num_nodes).add_(edge_index[1])
 
     if edge_type is not None:
-        idx[1:].add_(edge_type * (10 ** (len(str(num_nodes)) + 1)))
+        idx[1:].add_(edge_type * (10 ** (len(str(num_nodes)) + 3)))
 
     idx[1:], perm = torch.sort(
         idx[1:],
@@ -178,13 +183,23 @@ def remove_duplicates(edge_index: Adj, edge_type: Adj = None, edge_attr: Adj = N
     if edge_type is not None:
         edge_type, edge_attr = edge_type[perm], edge_attr[perm, :]
         edge_type, edge_attr = edge_type[mask], edge_attr[mask, :]
-        return edge_index, edge_type, edge_attr
+        if perturb_tensor is not None:
+            perturb_tensor = perturb_tensor[perm]
+            perturb_tensor = perturb_tensor[mask]
+            return edge_index, edge_type, edge_attr, perturb_tensor
+        else:
+            return edge_index, edge_type, edge_attr
     else:
         return edge_index
 
 
 ## To undirected function
-def to_undirected(edge_index: Adj, edge_type: Adj = None, edge_attr: Adj = None):
+def to_undirected(
+    edge_index: Adj,
+    edge_type: Adj = None,
+    edge_attr: Adj = None,
+    idx_perturb: Adj = None,
+):
 
     row = torch.cat([edge_index[0, :], edge_index[1, :]])
     col = torch.cat([edge_index[1, :], edge_index[0, :]])
@@ -194,9 +209,24 @@ def to_undirected(edge_index: Adj, edge_type: Adj = None, edge_attr: Adj = None)
     if edge_type is not None:
         edge_type = torch.cat([edge_type, edge_type])
         edge_attr = torch.vstack((edge_attr, edge_attr))
-        edge_index, edge_type, edge_attr = remove_duplicates(
-            edge_index=edge_index, edge_type=edge_type, edge_attr=edge_attr
-        )
+        if idx_perturb is not None:
+            perturb_tensor = torch.zeros(edge_type.size(0))
+            perturb_tensor[idx_perturb] = -1
+            perturb_tensor = torch.cat([perturb_tensor, perturb_tensor])
+            edge_index, edge_type, edge_attr, perturb_tensor = remove_duplicates(
+                edge_index=edge_index,
+                edge_type=edge_type,
+                edge_attr=edge_attr,
+                perturb_tensor=perturb_tensor,
+            )
+            idx_perturb = (perturb_tensor < 0).nonzero().squeeze()
+            return edge_index, edge_type, edge_attr, idx_perturb
+        else:
+            edge_index, edge_type, edge_attr = remove_duplicates(
+                edge_index=edge_index,
+                edge_type=edge_type,
+                edge_attr=edge_attr,
+            )
         return edge_index, edge_type, edge_attr
     else:
         edge_index = remove_duplicates(edge_index=edge_index)

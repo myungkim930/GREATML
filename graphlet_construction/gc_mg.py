@@ -12,7 +12,13 @@ from torch_geometric.data import Data
 from torch_geometric.data import Batch
 
 # Graphlet
-from .gc_utils import k_hop_subgraph, subgraph, feature_extract_lm, add_self_loops
+from .gc_utils import (
+    k_hop_subgraph,
+    subgraph,
+    feature_extract_lm,
+    add_self_loops,
+    to_undirected,
+)
 
 # Graphlet class to construct a graphlet of a given entity
 class Graphlet:
@@ -30,12 +36,6 @@ class Graphlet:
         self.num_hops = num_hops
         self.flow = flow
 
-    def set_param(self, **kwargs):
-        self.max_nodes = kwargs.get("max_nodes")
-        self.per_perturb = kwargs.get("per_perturb")
-        self.n_perturb_mask = kwargs.get("n_perturb_mask")
-        self.n_perturb_neg = kwargs.get("n_perturb_neg")
-
     def make_batch(
         self,
         cen_idx: Union[int, List[int], Tensor],
@@ -50,20 +50,11 @@ class Graphlet:
         elif isinstance(cen_idx, int):
             cen_idx = [cen_idx]
 
-        self.set_param(
-            max_nodes=max_nodes,
-            per_perturb=per_perturb,
-            n_perturb_mask=n_perturb_mask,
-            n_perturb_neg=n_perturb_neg,
-        )
-
         data_head = []
         neg_edge_set = set()
         neg_node_set = set()
         for g_idx in range(len(cen_idx)):
-            data_temp = self.make_graphlet(
-                node_idx=cen_idx[g_idx], max_nodes=self.max_nodes
-            )
+            data_temp = self.make_graphlet(node_idx=cen_idx[g_idx], max_nodes=max_nodes)
             data_temp.idx_perturb = torch.tensor([-1])
             data_head.append(data_temp)
             neg_edge_set.update(data_temp.edge_type.unique().tolist())
@@ -78,19 +69,19 @@ class Graphlet:
                 self.perturb_graphlet(
                     data=data_head[g_idx],
                     method=perturb_methods[np.random.randint(0, 2)],
-                    per_perturb=self.per_perturb,
+                    per_perturb=per_perturb,
                 )
-                for _ in range(self.n_perturb_mask)
+                for _ in range(n_perturb_mask)
             ]
             data_perturb_neg = [
                 self.perturb_graphlet(
                     data=data_head[g_idx],
                     method=perturb_methods[np.random.randint(2, 4)],
-                    per_perturb=self.per_perturb,
+                    per_perturb=per_perturb,
                     neg_edge_set=neg_edge_set,
                     neg_node_set=neg_node_set,
                 )
-                for _ in range(self.n_perturb_neg)
+                for _ in range(n_perturb_neg)
             ]
             data_perturb = data_perturb + data_perturb_mask + data_perturb_neg
         data_total = data_head + data_perturb
@@ -110,15 +101,22 @@ class Graphlet:
                     ]
                 )
 
+        edge_index, edge_type, edge_attr, idx_perturb = to_undirected(
+            data_batch_temp.edge_index,
+            data_batch_temp.edge_type,
+            data_batch_temp.edge_attr,
+            data_batch_temp.idx_perturb[data_batch_temp.idx_perturb > -1],
+        )
+
         data_batch = Data(
             x=data_batch_temp.x,
-            edge_index=data_batch_temp.edge_index,
-            edge_type=data_batch_temp.edge_type,
-            edge_attr=data_batch_temp.edge_attr,
+            edge_index=edge_index,
+            edge_type=edge_type,
+            edge_attr=edge_attr,
             g_idx=data_batch_temp.g_idx,
             y=data_batch_temp.y,
-            idx_perturb=data_batch_temp.idx_perturb[data_batch_temp.idx_perturb > -1],
-            head_idx = data_batch_temp.ptr[:-1]
+            idx_perturb=idx_perturb,
+            head_idx=data_batch_temp.ptr[:-1],
         )
 
         return data_batch
