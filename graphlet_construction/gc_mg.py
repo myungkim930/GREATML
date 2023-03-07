@@ -39,6 +39,7 @@ class Graphlet:
     def make_batch(
         self,
         cen_idx: Union[int, List[int], Tensor],
+        # reduce_per=None,
         max_nodes: int = 100,
         per_perturb: float = 0.3,
         n_perturb: int = 1,
@@ -48,6 +49,40 @@ class Graphlet:
             cen_idx = cen_idx.tolist()
         elif isinstance(cen_idx, int):
             cen_idx = [cen_idx]
+
+        head_ = self.edge_index[0, :]
+        tail_ = self.edge_index[1, :]
+        node_mask = head_.new_empty(self.edge_index.max().item() + 1, dtype=torch.bool)
+        node_mask.fill_(False)
+        reduce_mask = head_.new_empty(head_.size(0), dtype=torch.bool)
+        reduce_mask.fill_(False)
+
+        subset = cen_idx
+
+        for _ in range(self.num_hops):
+            node_mask[subset] = True
+            reduce_mask = torch.index_select(node_mask, 0, head_)
+            subset = tail_[reduce_mask]
+
+        self.edge_index_reduced = self.edge_index[:, reduce_mask]
+        self.edge_type_reduced = self.edge_type[reduce_mask]
+
+        # if reduce_per is not None:
+        #     head_ = self.main_data.edge_index[0, :]
+        #     node_mask = head_.new_empty(self.edge_index[0,:].max().item()+1, dtype=torch.bool)
+        #     node_mask.fill_(False)
+        #     node_mask[cen_idx] = True
+        #     reduce_mask = torch.index_select(node_mask, 0, head_)
+        #     if self.num_hops==1:
+        #         reduce_per = 1
+        #     num_reduce = math.ceil((1 - reduce_per) * head_.size(0))
+        #     reduce_add_idx_ = torch.randperm(head_.size(0))[0:num_reduce]
+        #     reduce_mask[reduce_add_idx_] = True
+        #     self.edge_index_reduced = self.edge_index[:, reduce_mask]
+        #     self.edge_type_reduced = self.edge_type[reduce_mask]
+        # else:
+        #     self.edge_index_reduced = self.edge_index
+        #     self.edge_type_reduced = self.edge_type
 
         data_head = []
         neg_edge_set = set()
@@ -77,24 +112,6 @@ class Graphlet:
                 )
                 for _ in range(n_perturb)
             ]
-            # data_perturb_mask = [
-            #     self.perturb_graphlet(
-            #         data=data_head[g_idx],
-            #         method=perturb_methods[np.random.randint(0, 2)],
-            #         per_perturb=per_perturb,
-            #     )
-            #     for _ in range(n_perturb_mask)
-            # ]
-            # data_perturb_neg = [
-            #     self.perturb_graphlet(
-            #         data=data_head[g_idx],
-            #         method=perturb_methods[np.random.randint(2, 4)],
-            #         per_perturb=per_perturb,
-            #         neg_edge_set=neg_edge_set,
-            #         neg_node_set=neg_node_set,
-            #     )
-            #     for _ in range(n_perturb_neg)
-            # ]
             data_perturb = data_perturb + data_perturb_
         data_total = data_head + data_perturb
 
@@ -137,7 +154,7 @@ class Graphlet:
         self,
         node_idx: Union[int, List[int], Tensor],
         max_nodes=None,
-        exclude_center=True,
+        exclude_center: bool = True,
     ):
 
         if isinstance(node_idx, Tensor):
@@ -146,10 +163,10 @@ class Graphlet:
             node_idx = node_idx[0]
 
         edge_index, edge_type, mapping = k_hop_subgraph(
-            edge_index=self.edge_index,
+            edge_index=self.edge_index_reduced,
             node_idx=node_idx,
             num_hops=self.num_hops,
-            edge_type=self.edge_type,
+            edge_type=self.edge_type_reduced,
             flow=self.flow,
         )
 
