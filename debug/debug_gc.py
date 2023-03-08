@@ -29,6 +29,11 @@ result = gc.k_hop_subgraph(
     node_idx=node_idx, num_hops=num_hops, edge_index=edge_index, edge_type=edge_type
 )
 
+result1 = k_hop_subgraph(
+    node_idx=node_idx, num_hops=num_hops, edge_index=edge_index, edge_type=edge_type
+)
+
+
 ## 2. subgraph
 edge_index = torch.tensor([[2, 2, 4, 4, 6, 6], [0, 1, 2, 3, 4, 5]])
 edge_type = torch.tensor([2, 3, 3, 3, 3, 1])
@@ -41,7 +46,9 @@ edge_index = torch.tensor([[2, 2, 4, 4, 6, 6], [0, 1, 2, 3, 4, 5]])
 edge_type = torch.tensor([2, 3, 3, 3, 3, 1])
 
 result1 = gc.add_self_loops(edge_index=edge_index, edge_type=edge_type)
-result2 = gc.add_self_loops(edge_index=edge_index, edge_type=edge_type, exclude_center=True)
+result2 = gc.add_self_loops(
+    edge_index=edge_index, edge_type=edge_type, exclude_center=True
+)
 
 ## 4. remove_duplicates
 edge_index = torch.tensor([[0, 1, 2, 2, 2, 2, 1], [1, 0, 3, 3, 3, 3, 2]])
@@ -91,21 +98,21 @@ result = gc.to_directed(edge_index, edge_type, edge_index1, edge_type1, edge_att
 import torch
 import graphlet_construction as gc
 
-g = gc.Graphlet(main_data, num_hops=1)
+g = gc.Graphlet(main_data, num_hops=2)
 idx_head = main_data.edge_index[0, :].unique()
 
 # single graphlet
 idx = idx_head[torch.randperm(idx_head.size()[0])][0]
-data = g.make_graphlet(node_idx=idx, max_nodes = 100)
+idx = 2859
+data = g.make_batch(cen_idx=idx, max_nodes=100, n_perturb=0)
 
 # multiple graphlets in a batch with perturbations
 idx_cen = idx_head[torch.randperm(idx_head.size()[0])][0:10]
-data_batch = g.make_batch(cen_idx=idx_cen, max_nodes=100, n_perturb_mask=6, n_perturb_neg=1)
+data_batch = g.make_batch(cen_idx=idx, max_nodes=100, n_perturb=1)
 
 # multiple graphlets in a batch without perturbation
-data_batch = g.make_batch(cen_idx=idx_cen, max_nodes=100, n_perturb_mask=0, n_perturb_neg=0)
+data_batch = g.make_batch(
+    cen_idx=idx_cen, max_nodes=100, n_perturb_mask=0, n_perturb_neg=0
+)
 
 # %%
-
-
-

@@ -20,7 +20,6 @@ def k_hop_subgraph(
     num_hops: int,
     edge_index: Adj,
     edge_type: Union[int, List[int], Tensor],
-    flow: str = "target_to_source",
 ) -> Tuple[Tensor, Tensor, Tensor]:
     r"""Computes the induced subgraph of :obj:`edge_index` around all nodes in
     :attr:`node_idx` reachable within :math:`k` hops.
@@ -28,36 +27,29 @@ def k_hop_subgraph(
 
     num_nodes = edge_index.max().item() + 1
 
-    assert flow in ["source_to_target", "target_to_source"]
-    if flow == "target_to_source":
-        row, col = edge_index
-    else:
-        col, row = edge_index
-
-    node_mask = row.new_empty(num_nodes, dtype=torch.bool)
-    edge_mask = row.new_empty(row.size(0), dtype=torch.bool)
+    head, tail = edge_index
+    node_mask = head.new_empty(num_nodes, dtype=torch.bool)
+    node_mask.fill_(False)
+    edge_mask = head.new_empty(head.size(0), dtype=torch.bool)
+    edge_mask.fill_(False)
 
     if isinstance(node_idx, (int, list, tuple)):
-        node_idx = torch.tensor([node_idx], device=row.device).flatten()
+        node_idx = torch.tensor([node_idx], device=head.device).flatten()
     else:
-        node_idx = node_idx.to(row.device)
+        node_idx = node_idx.to(head.device)
 
-    subsets = [node_idx]
+    subset_ = node_idx.clone()
+    subset = node_idx.clone()
 
     for _ in range(num_hops):
-        node_mask.fill_(False)
-        node_mask[subsets[-1]] = True
-        torch.index_select(node_mask, 0, row, out=edge_mask)
-        subsets.append(col[edge_mask])
+        node_mask[subset_] = True
+        edge_mask = torch.index_select(node_mask, 0, head)
+        subset_ = tail[edge_mask]
+        subset = torch.cat((subset, subset_))
 
-    subset, _ = torch.cat(subsets).unique(return_inverse=True)
+    subset = subset.unique()
 
-    node_mask.fill_(False)
-    node_mask[subset] = True
-
-    edge_mask = node_mask[row] & node_mask[col]
     edge_index = edge_index[:, edge_mask]
-
     edge_type = edge_type[edge_mask]
 
     mapping = torch.reshape(torch.tensor((node_idx, 0)), (2, 1))
@@ -275,14 +267,17 @@ def feature_extract_lm(
     if node_idx is not None:
         if isinstance(node_idx, int):
             node_idx = [node_idx]
-        elif isinstance(node_idx, Tensor) and node_idx.size()[0] == 1:
-            node_idx = [node_idx.tolist()]
+        elif isinstance(node_idx, Tensor):
+            node_idx = node_idx.squeeze()
+        if isinstance(node_idx, Tensor) and node_idx.dim() == 0:
+            node_idx = [node_idx]
 
         gent_names = main_data.ent2idx[node_idx]
 
         x = [
             main_data.x_model.get_sentence_vector(
-                x.replace("_", " ")
+                re.sub(r"([a-z]+)+([a-z]+)/", "", x)
+                .replace("_", " ")
                 .replace("<", "")
                 .replace("\n", "")
                 .replace(">", "")
@@ -301,8 +296,10 @@ def feature_extract_lm(
     if edge_type is not None:
         if isinstance(edge_type, int):
             edge_type = [edge_type]
-        elif isinstance(edge_type, Tensor) and edge_type.size()[0] == 1:
-            edge_type = edge_type.tolist()
+        elif isinstance(edge_type, Tensor):
+            edge_type = edge_type.squeeze()
+        if isinstance(edge_type, Tensor) and edge_type.dim() == 0:
+            edge_type = [edge_type]
 
         grel_names = main_data.rel2idx[edge_type]
 
