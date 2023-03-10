@@ -1,7 +1,9 @@
-from .infonce import infonce_loss
+from .infonce import Infonce_loss
+from .loss_utils import create_target_node
 
 __all__ = [
-    "infonce_loss",
+    "Infonce_loss",
+    "create_target_node",
 ]
 
 classes = __all__

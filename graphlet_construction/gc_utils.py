@@ -276,7 +276,7 @@ def feature_extract_lm(
 
         x = [
             main_data.x_model.get_sentence_vector(
-                re.sub(r"([a-z]+)+([a-z]+)/", "", x)
+                re.sub(r"[a-z]{2,}/", "", x)
                 .replace("_", " ")
                 .replace("<", "")
                 .replace("\n", "")

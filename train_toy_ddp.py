@@ -10,34 +10,57 @@ import graphlet_construction as gc
 from time import time
 from model import YATE_Encode
 from data_utils import Load_data
+from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import _LRScheduler
 
 from loss import create_target_node, Infonce_loss
 
+import torch.multiprocessing as mp
+from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
+
+
 ##############
+## DDP setup
+def ddp_setup(rank, world_size):
+    """
+    Args:
+        rank: Unique identifier of each process
+        world_size: Total number of processes
+    """
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+    init_process_group(backend="nccl", rank=rank, world_size=world_size)
+
+
 ## Trainer class
 class Trainer:
     def __init__(
         self,
         exp_setting: dict,
+        gpu_id: int,
     ) -> None:
         self.__dict__ = exp_setting
-        self.model = self.model.to(self.device)
-        self.criterion_node = Infonce_loss()  # BCEWithLogitsLoss BCELoss
-        self.weights = self.weights.to(self.device)
+        self.gpu_id = gpu_id
+        self.model = self.model.to(gpu_id)
+        self.model = DDP(self.model, device_ids=[gpu_id])
+        self.criterion_node = torch.nn.L1Loss()
+        # Other losses: torch.nn. BCEWithLogitsLoss BCELoss L1Loss / Infonce_loss
+        self.weights = self.weights.to(gpu_id)
         self.criterion_edge = torch.nn.CrossEntropyLoss(self.weights)
         self.log = []
 
-    def _run_step(self, step):
+    def _run_step(self, step, idx):
         start_time = time()
         self.optimizer.zero_grad()
-        idx = self.idx_extract.sample(n_batch=self.n_batch)
         data = self.graphlet.make_batch(idx, **self.graphlet_setting)
-        data = data.to(self.device)
+        data = data.to(self.gpu_id)
         output_x, output_edge_attr = self.model(data)
 
         # loss on nodes
         target_node = create_target_node(data=data)
+        # target_node.to(self.gpu_id)
         loss_node = self.criterion_node(output_x, target_node)
 
         # loss on edges
@@ -60,7 +83,7 @@ class Trainer:
         )
 
         print(
-            f"[GPU{self.device.index}] Step {step} | Loss(n/e): {loss_node}/{loss_edge} | Duration: {duration}"
+            f"[GPU{self.gpu_id}] Step {step} | Loss(n/e): {loss_node}/{loss_edge} | Duration: {duration}"
         )
 
         del (
@@ -79,10 +102,10 @@ class Trainer:
             "per_perturb_increase"
         ]
         self.perturb_window["step_perturb_change"] += self.perturb_window["step_diff"]
-        self.perturb_window["step_diff"] += self.perturb_window["change_step_diff"]
+        self.perturb_window["step_diff"] *= self.perturb_window["change_step_diff"]
 
     def _save_checkpoint(self, step):
-        ckp = self.model.state_dict()
+        ckp = self.model.module.state_dict()
         PATH = self.save_dir + f"/ckpt_step{step}.pt"
         torch.save(ckp, PATH)
         PATH_LOG = self.save_dir + f"/log_train.txt"
@@ -95,18 +118,28 @@ class Trainer:
         self.idx_extract.reset()
         self.model.train()
         step = 0
+        idx = self.idx_extract.sample(n_batch=self.n_batch * torch.cuda.device_count())
+        train_idx = DataLoader(
+            idx,
+            batch_size=self.n_batch,
+            pin_memory=True,
+            shuffle=False,
+            sampler=DistributedSampler(idx),
+        )
+        # self.train_data.sampler.set_epoch(epoch)
         while step < self.n_steps:
-            self._run_step(step)
+            for idx in train_idx:
+                self._run_step(step, idx)
             step += 1
             if step > self.perturb_window["step_perturb_change"] - 1:
                 self._set_perturb()
-            if step % self.save_every == 0:
+            if self.gpu_id == 0 and step % self.save_every == 0:
                 self._save_checkpoint(step)
 
 
 def load_train_objs(
     data_name: str,
-    gpu_device: int,
+    # gpu_device: int,
     num_hops: int,
     per_perturb: float,
     n_perturb_mask: int,
@@ -125,8 +158,8 @@ def load_train_objs(
     exp_setting["save_every"] = save_every
 
     # set device
-    device = torch.device(f"cuda:{gpu_device}" if torch.cuda.is_available() else "cpu")
-    exp_setting["device"] = device
+    # device = torch.device(f"cuda:{gpu_device}" if torch.cuda.is_available() else "cpu")
+    # exp_setting["device"] = device
 
     # exp_setting["graphlet_setting"] = [num_pos, per_pos, num_neg, per_neg, max_nodes]
     exp_setting["graphlet_setting"] = dict(
@@ -141,7 +174,7 @@ def load_train_objs(
         {
             "step_perturb_change": 100,
             "step_diff": 200,
-            "change_step_diff": 100,
+            "change_step_diff": 2,
             "per_perturb_increase": 0.2,
         }
     )
@@ -289,25 +322,32 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
 
 
 ##############
-def main():
+def main(rank: int, world_size: int):
     os.chdir("/storage/store3/work/mkim/gitlab/GREATML")
     exp_setting = load_train_objs(
         data_name="yago3",
-        gpu_device=1,
+        # gpu_device=1,
         num_hops=1,
         per_perturb=0.2,
         n_perturb_mask=1,
         n_perturb_replace=0,
         max_nodes=100,
-        n_batch=8,
+        n_batch=16,
         n_steps=1000,
         save_every=100,
     )
-    trainer = Trainer(exp_setting)
+    ddp_setup(rank, world_size)
+    trainer = Trainer(exp_setting, rank)
     trainer.train()
+    destroy_process_group()
 
 
 if __name__ == "__main__":
-    main()
+
+    world_size = torch.cuda.device_count()
+    mp.spawn(main, args=(world_size,), nprocs=world_size)
 
 ##################
+
+
+# join=True

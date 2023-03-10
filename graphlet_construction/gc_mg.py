@@ -150,23 +150,20 @@ class Graphlet:
             edge_type=self.edge_type_reduced,
         )
 
-        if self.max_nodes is not None:
-            if mapping.size(1) > self.max_nodes:
-                idx_keep = (mapping[1, :] > 0) & (
-                    mapping[1, :] < edge_index.max().item()
-                )
-                idx_keep[
-                    idx_keep.nonzero().squeeze()[
-                        torch.randperm(idx_keep.nonzero().squeeze().size(0))[
-                            0 : self.max_nodes - 2
-                        ]
+        if (self.max_nodes is not None) & (mapping.size(1) > self.max_nodes):
+            idx_keep = (mapping[1, :] > 0) & (mapping[1, :] < edge_index.max().item())
+            idx_keep[
+                idx_keep.nonzero().squeeze()[
+                    torch.randperm(idx_keep.nonzero().squeeze().size(0))[
+                        0 : self.max_nodes - 2
                     ]
-                ] = False
-                idx_keep = ~idx_keep
-                idx_keep = idx_keep.nonzero().squeeze()
-                edge_index, edge_mask, mask_ = subgraph(idx_keep, edge_index)
-                edge_type = edge_type[edge_mask]
-                mapping = torch.vstack((mapping[0, mask_[0, :]], mask_[1, :]))
+                ]
+            ] = False
+            idx_keep = ~idx_keep
+            idx_keep = idx_keep.nonzero().squeeze()
+            edge_index, edge_mask, mask_ = subgraph(idx_keep, edge_index)
+            edge_type = edge_type[edge_mask]
+            mapping = torch.vstack((mapping[0, mask_[0, :]], mask_[1, :]))
 
         edge_index, edge_type = add_self_loops(
             edge_index=edge_index,
@@ -213,12 +210,13 @@ class Graphlet:
             data_perturb.edge_attr[idx_perturb_, :] = torch.ones(
                 n_perturb, data_perturb.edge_attr.size(1)
             )
-            data_perturb.y = torch.tensor([1.0])
+            data_perturb.y = torch.tensor([0.0])
         elif method == "mask_node":
-            data_perturb.x[
-                data_perturb.edge_index[1, idx_perturb_], :
-            ] = -9e15 * torch.ones(n_perturb, data_perturb.x.size(1))
-            data_perturb.y = torch.tensor([1.0])
+            tail_idx_ = data_perturb.edge_index[1, idx_perturb_].unique()
+            data_perturb.x[tail_idx_, :] = -9e15 * torch.ones(
+                tail_idx_.size(0), data_perturb.x.size(1)
+            )
+            data_perturb.y = torch.tensor([0.0])
         elif method == "neg_edge":
             neg_edge_ = torch.ones(len(self.rel2idx))
             neg_edge_[data_perturb.edge_type[idx_perturb_]] = 0
